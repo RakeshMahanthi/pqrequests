@@ -1,9 +1,0 @@
-[project]
-name = "requests_pqc"
-version = "0.0.0"
-description = "PQC-aware requests scaffolding (example)"
-readme = "README.md"
-requires-python = ">=3.8"
-
-[project.urls]
-"Homepage" = "https://example.invalid/"
