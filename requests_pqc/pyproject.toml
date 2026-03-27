@@ -5,10 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "requests_pqc"
 version = "0.1.0"
-description = "A requests-like wrapper for PQC-enabled curl"
+description = "A requests-like wrapper for PQC-enabled curl supporting ML-KEM"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = [] # No external Python dependencies since we use subprocess
+license = {text = "MIT"}
+authors = [
+    {name = "Anjaneya Rakesh, Mahanthi", email = "amahanthi3@gatech.edu"}
+]
+keywords = ["pqc", "post-quantum", "cryptography", "ml-kem", "curl", "requests"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = []
+
+[project.urls]
+"Homepage" = "https://github.com/RakeshMahanthi/pqrequests"
+"Bug Tracker" = "https://github.com/RakeshMahanthi/pqrequests/issues"
 
 [tool.setuptools]
 py-modules = ["requests_pqc"]
