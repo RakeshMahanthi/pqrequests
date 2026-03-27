@@ -10,7 +10,7 @@ class PQCResponse:
     def __repr__(self):
         return f"<PQCResponse [{self.status_code}] KEM: {self.kem_algo}>"
 
-def request(method, url, mode="classical", data=None, headers=None, verify =True, cacert=None**kwargs):
+def request(method, url, mode="classical", data=None, headers=None, verify =True, cacert=None,**kwargs):
     # Map modes to curl-compatible curve strings
     mode_map = {
         "classical": "x25519",
