@@ -1,110 +1,64 @@
-import pycurl
-import ctypes
+import subprocess
 import re
-import json
-from ctypes.util import find_library
-from io import BytesIO
 
-# libcurl numeric for CURLOPT_SSL_EC_CURVES
-CURL_OPT_SSL_EC_CURVES = 10298
-
-class Response:
-    """Mirrors the requests.Response object."""
-    def __init__(self, content, status_code, headers, negotiated_curve=None):
-        self.content = content
+class PQCResponse:
+    def __init__(self, status_code, text, kem_algo):
         self.status_code = status_code
-        self.headers = headers
-        self.negotiated_curve = negotiated_curve
+        self.text = text
+        self.kem_algo = kem_algo
+
+    def __repr__(self):
+        return f"<PQCResponse [{self.status_code}] KEM: {self.kem_algo}>"
+
+def request(method, url, mode="classical", data=None, headers=None, verify =True, cacert=None**kwargs):
+    # Map modes to curl-compatible curve strings
+    mode_map = {
+        "classical": "x25519",
+        "hybrid": "X25519MLKEM768",  # Note the uppercase and underscore
+        "pure": "MLKEM768"
+    }
     
-    def text(self):
-        return self.content.decode('utf-8', errors='replace')
+    curve = mode_map.get(mode, "x25519")
+    
+    if verify == False:
+        cmd = ["curl", "-s", "-v", "--curves", curve, "-k", "-X", method.upper(), url]
+    else:
+        cmd = ["curl", "-s", "-v", "--curves", curve, "-X", method.upper(), url]
+    
+    if headers:
+        for k, v in headers.items():
+            cmd.extend(["-H", f"{k}: {v}"])
 
-    def json(self):
-        return json.loads(self.text())
+    if verify and cacert:   
+        cmd.extend(["--cacert", cacert])
+    
+    if data:
+        # Simple string conversion for data; can be expanded for JSON
+        cmd.extend(["-d", str(data)])
 
-class Session:
-    def __init__(self):
-        # Locate the libcurl binary for direct C-level calls
-        lib_path = find_library('curl')
-        if not lib_path:
-            raise ImportError("Could not find libcurl. Ensure it is installed.")
-        self.libcurl = ctypes.CDLL(lib_path)
-        
-        # Mapping PQC Modes to OpenSSL groups (verified for OpenSSL 3.6.1)
-        self.modes = {
-            "classical": "X25519",
-            "hybrid":    "X25519MLKEM768",
-            "pure":      "MLKEM768"
-        }
+    # Execute curl: stdout contains the body, stderr contains headers/SSL info
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    print(result.stdout)
+    print(result.stderr)
+    
+    # Regex parsing for status code and negotiated KEM
+    status_match = re.search(r"< HTTP\/.* (\d{3})", result.stderr)
+    status_code = int(status_match.group(1)) if status_match else None
+    
+    match = re.search(r"SSL connection using .*? / .*? / (.*?) /", result.stderr)
 
-    def request(self, method, url, data=None, json_data=None, pqc_mode="classical", timeout=30):
-        buffer = BytesIO()
-        header_buffer = BytesIO()
-        debug_logs = []
+    if match:
+        curve = match.group(1).strip()
+    else:
+        # Fallback: some versions might not have the trailing slash/id-ecPublicKey
+        match_alt = re.search(r"SSL connection using .*? / .*? / ([^\s/]+)", result.stderr)
+        curve = match_alt.group(1).strip() if match_alt else "Unknown"
+    
+    return PQCResponse(status_code, result.stdout, curve)
 
-        def debug_callback(infotype, message):
-            debug_logs.append(message.decode('utf-8', errors='ignore'))
-
-        c = pycurl.Curl()
-        c.setopt(pycurl.URL, url)
-        c.setopt(pycurl.CUSTOMREQUEST, method.upper())
-        c.setopt(pycurl.WRITEDATA, buffer)
-        c.setopt(pycurl.HEADERFUNCTION, header_buffer.write)
-        c.setopt(pycurl.TIMEOUT, timeout)
-        
-        # Enable log capturing for curve verification
-        c.setopt(pycurl.VERBOSE, True)
-        c.setopt(pycurl.DEBUGFUNCTION, debug_callback)
-
-        # Handle POST Data
-        if json_data:
-            c.setopt(pycurl.POSTFIELDS, json.dumps(json_data))
-            c.setopt(pycurl.HTTPHEADER, ['Content-Type: application/json'])
-        elif data:
-            c.setopt(pycurl.POSTFIELDS, data)
-
-        # APPLY PQC BYPASS: Call C-level libcurl directly to avoid PycURL type checks
-        handle_ptr = ctypes.c_void_p.from_address(id(c) + 16).value
-        curve_selection = self.modes.get(pqc_mode, self.modes["classical"])
-        self.libcurl.curl_easy_setopt(handle_ptr, CURL_OPT_SSL_EC_CURVES, curve_selection.encode('utf-8'))
-        print("Selected PQC Mode:", pqc_mode, "| Curve:", curve_selection)
-
-        try:
-            c.perform()
-            
-            full_log = "".join(debug_logs)
-
-            # This looks for the pattern: / Cipher / Group / KeyType
-            # It captures the text between the second and third forward slash
-            match = re.search(r"SSL connection using .*? / .*? / (.*?) /", full_log)
-
-            if match:
-                curve = match.group(1).strip()
-            else:
-                # Fallback: some versions might not have the trailing slash/id-ecPublicKey
-                match_alt = re.search(r"SSL connection using .*? / .*? / ([^\s/]+)", full_log)
-                curve = match_alt.group(1).strip() if match_alt else "Unknown"
-
-            return Response(
-                content=buffer.getvalue(),
-                status_code=c.getinfo(pycurl.RESPONSE_CODE),
-                headers=header_buffer.getvalue().decode('iso-8859-1'),
-                negotiated_curve=curve
-            )
-        except pycurl.error as e:
-            raise ConnectionError(f"PQC Connection Failed: {e}")
-        finally:
-            c.close()
-
-    def get(self, url, **kwargs): return self.request("GET", url, **kwargs)
-    def post(self, url, **kwargs): return self.request("POST", url, **kwargs)
-    def put(self, url, **kwargs):    return self.request("PUT", url, **kwargs)
-    def patch(self, url, **kwargs):  return self.request("PATCH", url, **kwargs)
-    def delete(self, url, **kwargs): return self.request("DELETE", url, **kwargs)
-
-# Global convenience methods
-def get(url, **kwargs): return Session().get(url, **kwargs)
-def post(url, **kwargs): return Session().post(url, **kwargs)
-def put(url, **kwargs):    return Session().put(url, **kwargs)
-def patch(url, **kwargs):  return Session().patch(url, **kwargs)
-def delete(url, **kwargs): return Session().delete(url, **kwargs)
+# Support for specific HTTP verbs
+def get(url, **kwargs): return request("GET", url, **kwargs)
+def post(url, **kwargs): return request("POST", url, **kwargs)
+def put(url, **kwargs): return request("PUT", url, **kwargs)
+def delete(url, **kwargs): return request("DELETE", url, **kwargs)
+def patch(url, **kwargs): return request("PATCH", url, **kwargs)

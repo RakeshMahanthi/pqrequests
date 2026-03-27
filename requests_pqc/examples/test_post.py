@@ -1,13 +1,13 @@
+import json
 import requests_pqc
 
-payload = {"message": "Post-Quantum Handshake", "id": 768}
+payload = {"item":"New Data"}
 
 try:
-    print("\n--- Testing POST with Pure PQC Mode ---")
-    r = requests_pqc.post("https://httpbin.org", json_data=payload, pqc_mode="pure")
+    r = requests_pqc.post("https://localhost:5000/items", headers={"Content-Type": "application/json"}, data=json.dumps(payload), verify=False, mode="pure")
     
     print(f"Status: {r.status_code}")
-    print(f"Curve:  {r.negotiated_curve}")
-    print(f"Sent:   {r.json()['json']}")
+    print(f"Curve:  {r.kem_algo}")
+    print(f"Sent:   {r.text}")
 except Exception as e:
     print(f"POST failed: {e}")
